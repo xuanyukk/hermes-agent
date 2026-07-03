@@ -1092,7 +1092,13 @@ class QQAdapter(BasePlatformAdapter):
 
         chat_type = parsed.get("chat_type", "")
         chat_id = parsed.get("chat_id", "")
-        if chat_type == "c2c":
+        # QQ Bot DM sessions use chat_type="dm" in the session key (see
+        # build_source in _handle_c2c_message / _handle_guild_dm), while the
+        # internal _chat_type_map keeps "c2c" for legacy lookups. Accept both
+        # so approval/update buttons routed through DM sessions authorize
+        # correctly -- the operator (user_openid) must equal the chat_id,
+        # which for C2C DMs IS the user's own openid.
+        if chat_type in {"c2c", "dm"}:
             return bool(chat_id) and operator == chat_id
 
         if chat_type in {"group", "guild"}:
