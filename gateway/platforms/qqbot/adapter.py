@@ -261,6 +261,12 @@ class QQAdapter(BasePlatformAdapter):
         # register a custom handler.
         self._interaction_callback = self._default_interaction_dispatch
 
+        try:
+            from gateway.platforms.qqbot.terminal import QQTerminal
+            self._term = QQTerminal(app_id=self._app_id)
+        except Exception:
+            self._term = None
+
     # ------------------------------------------------------------------
     # Properties
     # ------------------------------------------------------------------
@@ -326,6 +332,11 @@ class QQAdapter(BasePlatformAdapter):
             self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
             self._mark_connected()
             logger.info("[%s] Connected", self._log_tag)
+            if self._term:
+                try:
+                    self._term.on_connect()
+                except Exception:
+                    pass
             return True
         except Exception as exc:
             message = f"QQ startup failed: {exc}"
@@ -359,6 +370,11 @@ class QQAdapter(BasePlatformAdapter):
         await self._cleanup()
         self._release_platform_lock()
         logger.info("[%s] Disconnected", self._log_tag)
+        if self._term:
+            try:
+                self._term.on_disconnect()
+            except Exception:
+                pass
 
     async def _cleanup(self) -> None:
         """Close WebSocket, HTTP session, and client."""
@@ -919,6 +935,16 @@ class QQAdapter(BasePlatformAdapter):
         """Cache the last message ID per chat, then delegate to base."""
         if event.message_id and event.source.chat_id:
             self._last_msg_id[event.source.chat_id] = event.message_id
+        if self._term:
+            try:
+                self._term.on_receive(
+                    user_name=event.source.user_name or (event.source.user_id or "")[:12],
+                    chat_type=event.source.chat_type or "",
+                    chat_name=(event.source.chat_id or "")[:20],
+                    content=event.text or "",
+                )
+            except Exception:
+                pass
         await super().handle_message(event)
 
     async def _on_message(self, event_type: str, d: Any) -> None:
@@ -2457,13 +2483,38 @@ class QQAdapter(BasePlatformAdapter):
         formatted = self.format_message(content)
         chunks = self.truncate_message(formatted, self.MAX_MESSAGE_LENGTH)
 
+        if self._term:
+            try:
+                self._term.on_reply_start(
+                    user_name="",
+                    chat_type=self._guess_chat_type(chat_id),
+                    chat_name=(chat_id or "")[:20],
+                )
+            except Exception:
+                pass
+
         last_result = SendResult(success=False, error="No chunks")
         for chunk in chunks:
+            if self._term:
+                try:
+                    self._term.on_reply_chunk(chunk)
+                except Exception:
+                    pass
             last_result = await self._send_chunk(chat_id, chunk, reply_to)
             if not last_result.success:
+                if self._term:
+                    try:
+                        self._term.on_reply_done(success=False, error=last_result.error or "")
+                    except Exception:
+                        pass
                 return last_result
             # Only reply_to the first chunk
             reply_to = None
+        if self._term:
+            try:
+                self._term.on_reply_done(success=last_result.success)
+            except Exception:
+                pass
         return last_result
 
     async def _send_chunk(
