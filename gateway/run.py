@@ -6738,17 +6738,14 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             self._booted_from_restart = True
         await self._send_restart_notification()
 
-        # Broadcast a lightweight "gateway is back" message to configured home
-        # channels only for non-chat planned restarts (terminal/SIGUSR1/service
-        # paths). Chat-originated /restart already has a precise reply target
-        # in .restart_notify.json, so keep that lifecycle in the originating
-        # chat/topic instead of also leaking it to the configured home channel.
-        if planned_restart_notification_pending:
-            try:
-                await self._send_home_channel_startup_notifications(
-                    skip_targets=None,
-                )
-            finally:
+        # Broadcast "gateway is back" to configured home channels on every
+        # startup so users always know when the bot comes online.
+        try:
+            await self._send_home_channel_startup_notifications(
+                skip_targets=None,
+            )
+        finally:
+            if planned_restart_notification_pending:
                 _clear_planned_restart_notification()
 
         # Automatically continue fresh sessions that were interrupted by the
