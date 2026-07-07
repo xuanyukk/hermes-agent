@@ -1472,12 +1472,9 @@ def start() -> None:
         from hermes_cli.setup import prompt_yes_no
 
         print("✗ Gateway service is not installed")
-        try:
-            if not prompt_yes_no("  Install it now so the gateway starts on login?", True):
-                print("  Run: hermes gateway install")
-                raise RuntimeError("Gateway service not installed")
-        except EOFError:
-            raise RuntimeError("Gateway service not installed (non-interactive session)")
+        if not prompt_yes_no("  Install it now so the gateway starts on login?", True):
+            print("  Run: hermes gateway install")
+            return
         install(force=False)
         task_installed = is_task_registered()
         startup_installed = is_startup_entry_installed()
