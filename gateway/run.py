@@ -7133,7 +7133,18 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         await self.hooks.emit("gateway:startup", {
             "platforms": [p.value for p in self.adapters.keys()],
         })
-        
+
+        # Also emit as a plugin hook so xiaoye can send startup notifications
+        try:
+            from hermes_cli.plugins import invoke_hook as _invoke_hook
+            _invoke_hook(
+                "gateway:startup",
+                gateway=self,
+                platforms=[p.value for p in self.adapters.keys()],
+            )
+        except Exception:
+            pass
+
         if connected_count > 0:
             logger.info("Gateway running with %s platform(s)", connected_count)
         
@@ -7175,17 +7186,14 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             self._booted_from_restart = True
         await self._send_restart_notification()
 
-        # Broadcast a lightweight "gateway is back" message to configured home
-        # channels only for non-chat planned restarts (terminal/SIGUSR1/service
-        # paths). Chat-originated /restart already has a precise reply target
-        # in .restart_notify.json, so keep that lifecycle in the originating
-        # chat/topic instead of also leaking it to the configured home channel.
-        if planned_restart_notification_pending:
-            try:
-                await self._send_home_channel_startup_notifications(
-                    skip_targets=None,
-                )
-            finally:
+        # Broadcast "gateway is back" to configured home channels on every
+        # startup so users always know when the bot comes online.
+        try:
+            await self._send_home_channel_startup_notifications(
+                skip_targets=None,
+            )
+        finally:
+            if planned_restart_notification_pending:
                 _clear_planned_restart_notification()
 
         # Automatically continue fresh sessions that were interrupted by the
@@ -14560,7 +14568,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             )
             result = await adapter.send(
                 str(chat_id),
-                "♻ Gateway restarted successfully. Your session continues.",
+                "♻️ 小夜已重启成功，会话继续～\n💡 如有问题请发送「帮助」",
                 metadata=_non_conversational_metadata(metadata, platform=platform),
             )
             # adapter.send() catches provider errors (e.g. "Chat not found")
@@ -14601,7 +14609,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         """
         delivered: set[tuple[str, str, Optional[str]]] = set()
         skipped = skip_targets or set()
-        message = "♻️ Gateway online — Hermes is back and ready."
+        message = "🌙 小夜已上线，随时为你服务～"
 
         for platform, adapter in self.adapters.items():
             home = self.config.get_home_channel(platform)
@@ -20239,10 +20247,69 @@ async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = 
     if verbosity is not None:
         from agent.redact import RedactingFormatter
 
+        class ColoredFormatter(RedactingFormatter):
+            """Formatter that adds ANSI color codes based on logger name and level.
+
+            Module colors (by prefix):
+              gateway / hermes_plugins -> Cyan    (infrastructure)
+              agent / run_agent / batch_runner -> Magenta (AI processing)
+              xiaoye                       -> Green   (plugin system)
+              tools / model_tools          -> Blue    (tool execution)
+              cron                         -> Yellow  (scheduled tasks)
+
+            Level overrides:
+              WARNING  -> Yellow
+              ERROR    -> Red
+              CRITICAL -> Bold Red
+              DEBUG    -> Dim
+            """
+
+            _RESET  = "\033[0m"
+            _BOLD   = "\033[1m"
+            _DIM    = "\033[2m"
+            _RED    = "\033[31m"
+            _GREEN  = "\033[32m"
+            _YELLOW = "\033[33m"
+            _BLUE   = "\033[34m"
+            _MAGENTA = "\033[35m"
+            _CYAN   = "\033[36m"
+            _GRAY   = "\033[90m"
+
+            _MODULE_COLORS = [
+                ("gateway",         _CYAN),
+                ("hermes_plugins",  _CYAN),
+                ("agent",           _MAGENTA),
+                ("run_agent",       _MAGENTA),
+                ("batch_runner",    _MAGENTA),
+                ("xiaoye",          _GREEN),
+                ("tools",           _BLUE),
+                ("model_tools",     _BLUE),
+                ("cron",            _YELLOW),
+            ]
+
+            _LEVEL_COLORS = {
+                "WARNING":  _YELLOW,
+                "ERROR":    _RED,
+                "CRITICAL": _BOLD + _RED,
+                "DEBUG":    _DIM + _GRAY,
+            }
+
+            def format(self, record: logging.LogRecord) -> str:
+                formatted = super().format(record)
+                color = self._LEVEL_COLORS.get(record.levelname)
+                if color is None:
+                    for prefix, c in self._MODULE_COLORS:
+                        if record.name.startswith(prefix):
+                            color = c
+                            break
+                if color:
+                    return f"{color}{formatted}{self._RESET}"
+                return formatted
+
         _stderr_level = {0: logging.WARNING, 1: logging.INFO}.get(verbosity, logging.DEBUG)
         _stderr_handler = logging.StreamHandler(_safe_stderr())
         _stderr_handler.setLevel(_stderr_level)
-        _stderr_handler.setFormatter(RedactingFormatter('%(levelname)s %(name)s: %(message)s'))
+        _stderr_handler.setFormatter(ColoredFormatter('%(levelname)s %(name)s: %(message)s'))
         logging.getLogger().addHandler(_stderr_handler)
         # Lower root logger level if needed so DEBUG records can reach the handler
         if _stderr_level < logging.getLogger().level:

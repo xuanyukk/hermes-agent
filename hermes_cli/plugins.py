@@ -210,6 +210,10 @@ VALID_HOOKS: Set[str] = {
     "kanban_task_claimed",
     "kanban_task_completed",
     "kanban_task_blocked",
+    # Gateway startup hook. Fired once after all platforms are connected
+    # and the gateway is ready to receive messages. Observers only.
+    # Kwargs: gateway: GatewayRunner, platforms: list[str].
+    "gateway:startup",
 }
 
 ENTRY_POINTS_GROUP = "hermes_agent.plugins"
